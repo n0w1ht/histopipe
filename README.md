@@ -26,6 +26,7 @@ HistoEncoder is a research tool. Clusters group tiles that *look* alike; they ar
 - [Cluster views](#cluster-views)
 - [Naming clusters](#naming-clusters)
 - [Parquet to CSV](#parquet-to-csv)
+- [Gleason classifier](#gleason-classifier)
 - [Key reference](#key-reference)
 - [Customization](#customization)
 - [Running without a GPU](#running-without-a-gpu)
@@ -224,6 +225,21 @@ Parquet files can't be opened in a text editor or Excel. histopipe writes them a
 To make the CSV easier to read, the full tile path becomes just the tile's file name, in the first column, and decimals are rounded to 4 places (`histopipe-csv-decimals`). A single converted file opens in Emacs when it's ready.
 
 `features.csv` is large: one row per tile and 384 feature columns.
+
+## Gleason classifier
+
+`gleason/gleason.py` trains a small classifier on top of HistoEncoder features to predict a Gleason pattern for every tile, and a Gleason score and ISUP grade for every slide. It uses histopipe's output folders and the Radboud label masks, and runs on a CPU in minutes. It also needs `pip install openslide-python openslide-bin` in the venv, to read the masks.
+
+From your working folder, with the venv active, after `C-c h D` (radboud slides with masks) and `C-c h r`:
+
+```bat
+python gleason\gleason.py label      & rem tile labels from the masks -> tiles\<id>\labels.csv
+python gleason\gleason.py train      & rem logistic regression; tests on 20% held-out slides
+python gleason\gleason.py predict    & rem gleason_tiles.csv + gleason_map.jpg per slide, tiles\gleason_slides.csv
+python gleason\gleason.py evaluate   & rem predicted vs. true ISUP grade from train.csv
+```
+
+The slide score follows the biopsy rule: the most common cancer pattern plus the highest other pattern. `python gleason\gleason.py <command> --help` lists the options. This is a research model, not a diagnostic tool.
 
 ## Key reference
 
