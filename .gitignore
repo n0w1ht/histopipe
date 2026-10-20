@@ -1,0 +1,9 @@
+test/w/log
+test/w/k/
+test/w/tiles/
+test/w/tiles2/
+test/w/views/
+test/w/csv/
+test/w/status-tiles/
+__pycache__/
+*.elc
