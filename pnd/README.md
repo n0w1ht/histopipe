@@ -21,11 +21,11 @@ The models and weights are by Kentaro Yoshioka, fam_taro, Arutema and team PND: 
 
    If you don't have git, use **Code → Download ZIP** on GitHub and unzip it into the same folder.
 
-2. Install three packages in the HistoEncoder venv. The scripts already need torch, numpy and scikit-learn, and those are installed.
+2. Install three packages in the HistoEncoder venv. The scripts already need torch, numpy and scikit-learn, and those are installed. Pin the versions: the newest tifffile and imagecodecs pull in numpy 2, which torch 2.0.1 can't use.
 
    ```bat
    histo-env\Scripts\activate
-   pip install efficientnet_pytorch tifffile imagecodecs
+   pip install efficientnet_pytorch "tifffile==2024.8.30" "imagecodecs==2024.6.1" "numpy==1.26.4"
    ```
 
 3. Copy `pnd_predict.py` into the folder, or run it from your histopipe checkout.
