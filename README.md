@@ -343,6 +343,14 @@ Two tests use real polars and Pillow and are skipped unless you point them at a 
 - `HISTOPIPE_TEST_PARQUET`: a folder with `features.parquet` and `clusters.parquet`
 - `HISTOPIPE_TEST_VIEWS`: a slide folder with `tiles/`, `clusters.parquet` and `thumbnail.jpeg`
 
+## PANDA 1st-place ensemble
+
+`pnd/pnd_predict.py` runs the model ensemble that won the PANDA challenge (team PND) on your slides, on a CPU, as a benchmark for the Gleason classifier. It uses their published weights, which are licensed CC-BY-NC, for non-commercial use only. See [pnd/README.md](pnd/README.md) for setup and options.
+
+```bat
+python pnd\pnd_predict.py slides --pnd-dir Kaggle-PANDA-1st-place-solution --holdout
+```
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
