@@ -1,3 +1,4 @@
 #!/bin/bash
 if [ "$1" = -c ]; then PYTHONPATH="$(dirname "$0")/../lib" exec python3 "$@"; fi
+case "$1" in *.py) exec python3 "$@";; esac
 exit ${POLARS_CODE:-0}

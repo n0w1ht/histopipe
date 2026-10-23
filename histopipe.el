@@ -69,6 +69,12 @@
 ;; 0005f7aaab2800f6170c399693a96917, with their label masks, and
 ;; `C-c h D' picks N slides of one data provider (radboud by default)
 ;; spread over ISUP grades, using train.csv.
+;;
+;; `C-c h p' grades every slide with the PANDA challenge's winning
+;; ensemble (team PND, pnd/pnd_predict.py), cloning their weights
+;; first if needed; `p' in the status list grades one slide, and the
+;; PND and True columns show predicted and true ISUP grades.
+;; `C-c h P' opens the results, tiles/pnd_slides.csv.
 
 ;;; Code:
 
@@ -693,6 +699,8 @@ missing.  MASKS is as in `histopipe-download-slides'."
     (define-key map (kbd "v") #'histopipe-view-slide)
     (define-key map (kbd "x") #'histopipe-slide-to-csv)
     (define-key map (kbd "n") #'histopipe-name-clusters)
+    (define-key map (kbd "p") #'histopipe-pnd-predict-slide)
+    (define-key map (kbd "P") #'histopipe-pnd-results)
     (define-key map (kbd "r") #'histopipe-run)
     (define-key map (kbd "k") #'histopipe-stop)
     (define-key map (kbd "l") (lambda () (interactive) (pop-to-buffer (histopipe--log-buffer))))
@@ -702,7 +710,7 @@ missing.  MASKS is as in `histopipe-download-slides'."
 (define-derived-mode histopipe-status-mode tabulated-list-mode "Histopipe-Status"
   "Slides and how far the pipeline got with each."
   (setq tabulated-list-format [("Slide" 36 t) ("Tiles" 8 histopipe--sort-tiles :right-align t)
-                               ("Features" 9 t) ("Clusters" 9 t)])
+                               ("Features" 9 t) ("Clusters" 9 t) ("PND" 4 t) ("True" 4 t)])
   (setq tabulated-list-sort-key '("Slide"))
   (add-hook 'tabulated-list-revert-hook #'histopipe--status-entries nil t)
   (tabulated-list-init-header))
@@ -712,6 +720,7 @@ missing.  MASKS is as in `histopipe-download-slides'."
 
 (defun histopipe--status-entries ()
   (let* ((dirs (histopipe--slide-dirs))
+         (pnd (histopipe--pnd-results))
          (names (delete-dups
                  (append (mapcar #'file-name-base (histopipe--slide-files))
                          (mapcar #'file-name-nondirectory dirs)))))
@@ -727,7 +736,10 @@ missing.  MASKS is as in `histopipe-download-slides'."
                      (vector name
                              (if (histopipe--tiled-p dir) (number-to-string tiles) "-")
                              (if (histopipe--has dir "features.parquet") "yes" "-")
-                             (if (histopipe--has dir "clusters.parquet") "yes" "-")))))
+                             (if (histopipe--has dir "clusters.parquet") "yes" "-")
+                             (or (cdr (assoc "pnd_isup" (gethash name pnd))) "-")
+                             (let ((true (cdr (assoc "isup_grade" (gethash name pnd)))))
+                               (if (member true '(nil "")) "-" true))))))
            names))))
 
 ;;;###autoload
@@ -1106,6 +1118,176 @@ minibuffer.  A single result is opened when done."
     (unless files (user-error "No parquet files for %s" slide))
     (histopipe-parquet-to-csv files)))
 
+;;;; PANDA 1st-place ensemble
+
+(defconst histopipe--directory
+  (file-name-directory (or load-file-name buffer-file-name default-directory))
+  "Folder histopipe.el was loaded from.")
+
+(defcustom histopipe-pnd-script nil
+  "pnd_predict.py, which runs the PANDA 1st-place ensemble.
+nil looks for pnd/pnd_predict.py next to histopipe.el, then for
+pnd_predict.py in the folder above the tiles folder."
+  :type '(choice (const :tag "Find it" nil) file))
+
+(defcustom histopipe-pnd-directory nil
+  "Your copy of Kaggle-PANDA-1st-place-solution, with the weights.
+nil means Kaggle-PANDA-1st-place-solution in the folder above the
+tiles folder.  It is cloned there with git when it is missing."
+  :type '(choice (const :tag "Next to the tiles folder" nil) directory))
+
+(defcustom histopipe-pnd-holdout t
+  "Non-nil grades each slide only with the models that never trained on it.
+Keep it on for PANDA train slides, or the scores look better than
+they are; turn it off for slides from elsewhere to use every model."
+  :type 'boolean)
+
+(defcustom histopipe-pnd-speed 'full
+  "How much of the ensemble runs for each slide."
+  :type '(choice (const :tag "Every model with 12-view TTA (minutes per slide)" full)
+                 (const :tag "Every model, no TTA (under a minute)" no-tta)
+                 (const :tag "One b1 and one b0 model, no TTA (seconds)" fast)))
+
+(defcustom histopipe-pnd-threads nil
+  "CPU threads for torch in pnd_predict.py; nil lets torch decide."
+  :type '(choice (const :tag "torch default" nil) integer))
+
+(defun histopipe--parent () (file-name-directory (directory-file-name (histopipe--tiles))))
+
+(defun histopipe--pnd-csv () (expand-file-name "pnd_slides.csv" (histopipe--tiles)))
+
+(defun histopipe--pnd-dir ()
+  (file-name-as-directory
+   (expand-file-name (or histopipe-pnd-directory
+                         (expand-file-name "Kaggle-PANDA-1st-place-solution" (histopipe--parent))))))
+
+(defun histopipe--pnd-script ()
+  "Full path of pnd_predict.py, or a user error saying where to put it."
+  (or (cl-find-if #'file-exists-p
+                  (if histopipe-pnd-script
+                      (list (expand-file-name histopipe-pnd-script))
+                    (list (expand-file-name "pnd/pnd_predict.py" histopipe--directory)
+                          (expand-file-name "pnd_predict.py" (histopipe--parent)))))
+      (user-error "Cannot find pnd_predict.py; put it in %s or set `histopipe-pnd-script'"
+                  (histopipe--parent))))
+
+(defun histopipe--pnd-clone-step ()
+  "Queue item that clones the PND repository, with its weights, when missing."
+  (let ((dir (histopipe--pnd-dir)))
+    (list "PND weights"
+          (lambda ()
+            (if (file-directory-p (expand-file-name "final_models" dir))
+                (format "found in %s" dir)
+              (when (file-exists-p (directory-file-name dir))
+                (user-error "%s has no final_models folder; delete it or set `histopipe-pnd-directory'"
+                            dir))
+              (cons "cloning Kaggle-PANDA-1st-place-solution (about 350 MB)"
+                    (list (histopipe--executable "git") "clone" "--depth" "1"
+                          "https://github.com/kentaroy47/Kaggle-PANDA-1st-place-solution"
+                          (directory-file-name dir))))))))
+
+(defun histopipe--pnd-command (slides redo)
+  "Argument list of pnd_predict.py for SLIDES (files, or the slides folder)."
+  (append (list (histopipe--executable "python") (histopipe--pnd-script))
+          slides
+          (list "--pnd-dir" (directory-file-name (histopipe--pnd-dir))
+                "--out" (histopipe--pnd-csv)
+                "--train-csv" (expand-file-name histopipe-train-csv)
+                "--pattern" histopipe-slide-pattern)
+          (and histopipe-pnd-holdout '("--holdout"))
+          (pcase histopipe-pnd-speed ('no-tta '("--no-tta")) ('fast '("--fast")))
+          (and histopipe-pnd-threads (list "--threads" (number-to-string histopipe-pnd-threads)))
+          (and redo '("--redo"))))
+
+(defun histopipe--pnd-results ()
+  "Hash table of slide id -> alist of its row in pnd_slides.csv."
+  (let ((table (make-hash-table :test #'equal))
+        (file (histopipe--pnd-csv)))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (let* ((lines (split-string (buffer-string) "\r?\n" t))
+               (header (histopipe--csv-fields (car lines))))
+          (dolist (line (cdr lines))
+            (let ((row (cl-mapcar #'cons header (histopipe--csv-fields line))))
+              (puthash (cdr (assoc "image_id" row)) row table))))))
+    table))
+
+(defun histopipe--pnd-summary ()
+  (let ((rows (hash-table-values (histopipe--pnd-results))))
+    (histopipe--log "Finished: %d slides graded in %s%s" (length rows) (histopipe--pnd-csv)
+                    (let ((known (cl-remove-if (lambda (r) (equal (cdr (assoc "isup_grade" r)) ""))
+                                               rows)))
+                      (if (null known) ""
+                        (format "; %d of %d match the true ISUP grade"
+                                (cl-count-if (lambda (r) (equal (cdr (assoc "isup_grade" r))
+                                                                (cdr (assoc "pnd_isup" r))))
+                                             known)
+                                (length known)))))
+    (when (get-buffer "*histopipe-status*")
+      (with-current-buffer "*histopipe-status*"
+        (histopipe--status-entries)
+        (tabulated-list-print t)))))
+
+(defun histopipe--pnd-read-options ()
+  "Ask for the ensemble options; return non-nil to redo graded slides."
+  (setq histopipe-pnd-speed
+        (intern (completing-read "Speed: " '("full" "no-tta" "fast") nil t nil nil
+                                 (symbol-name histopipe-pnd-speed)))
+        histopipe-pnd-holdout
+        (y-or-n-p "Only models that never trained on each slide (for PANDA train slides)? "))
+  (y-or-n-p "Redo slides that are already graded? "))
+
+(defun histopipe--pnd-run (slides description redo)
+  (let ((command (histopipe--pnd-command slides redo)))
+    (histopipe-run-steps
+     (list (histopipe--pnd-clone-step)
+           (list "pnd" (lambda () (cons description command))))
+     nil #'histopipe--pnd-summary)))
+
+;;;###autoload
+(defun histopipe-pnd-predict-all (&optional ask)
+  "Grade every slide with the PANDA 1st-place ensemble (pnd_predict.py).
+Results go to pnd_slides.csv in the tiles folder and to the PND and
+True columns of the status list; graded slides are skipped, so a
+stopped run carries on where it left off.  The options are
+`histopipe-pnd-speed' and `histopipe-pnd-holdout'; with a prefix
+argument ASK, they are asked for and kept for this session."
+  (interactive "P")
+  (let ((redo (and ask (histopipe--pnd-read-options))))
+    (unless (histopipe--slide-files)
+      (user-error "No %s slides in %s" histopipe-slide-pattern (histopipe--slides)))
+    (histopipe--pnd-run (list (directory-file-name (histopipe--slides)))
+                        (format "PANDA ensemble (%s%s) on %d slides" histopipe-pnd-speed
+                                (if histopipe-pnd-holdout ", held-out models" "")
+                                (length (histopipe--slide-files)))
+                        redo)))
+
+;;;###autoload
+(defun histopipe-pnd-predict-slide (slide &optional ask)
+  "Grade SLIDE with the PANDA 1st-place ensemble.
+It is regraded if it was graded before.  With a prefix argument
+ASK, the options are asked for first, as in `histopipe-pnd-predict-all'."
+  (interactive
+   (list (or (and (derived-mode-p 'histopipe-status-mode) (tabulated-list-get-id))
+             (completing-read "Slide: " (mapcar #'file-name-base (histopipe--slide-files)) nil t))
+         current-prefix-arg))
+  (when ask (histopipe--pnd-read-options))
+  (let ((file (or (histopipe--slide-file slide)
+                  (user-error "No slide file for %s in %s" slide (histopipe--slides)))))
+    (histopipe--pnd-run (list file)
+                        (format "PANDA ensemble (%s%s) on %s" histopipe-pnd-speed
+                                (if histopipe-pnd-holdout ", held-out models" "") slide)
+                        t)))
+
+;;;###autoload
+(defun histopipe-pnd-results ()
+  "Open pnd_slides.csv, the grades from the PANDA ensemble."
+  (interactive)
+  (unless (file-exists-p (histopipe--pnd-csv))
+    (user-error "No grades yet; run `histopipe-pnd-predict-all' (C-c h p) first"))
+  (find-file-other-window (histopipe--pnd-csv)))
+
 ;;;; Key map
 
 ;;;###autoload
@@ -1123,6 +1305,8 @@ minibuffer.  A single result is opened when done."
     (define-key map (kbd "x") #'histopipe-parquet-to-csv)
     (define-key map (kbd "n") #'histopipe-name-clusters)
     (define-key map (kbd "V") #'histopipe-view-all)
+    (define-key map (kbd "p") #'histopipe-pnd-predict-all)
+    (define-key map (kbd "P") #'histopipe-pnd-results)
     map)
   "Keymap for histopipe commands; bind it to a prefix key.")
 ;;;###autoload

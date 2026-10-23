@@ -257,6 +257,8 @@ Bind `histopipe-command-map` to a prefix, here `C-c h`:
 | `C-c h d` | `histopipe-download-slides` |
 | `C-c h D` | `histopipe-download-sample` |
 | `C-c h x` | `histopipe-parquet-to-csv` |
+| `C-c h p` | `histopipe-pnd-predict-all`: grade every slide with the PANDA ensemble |
+| `C-c h P` | `histopipe-pnd-results`: open `pnd_slides.csv` |
 
 In the `*histopipe*` log, `k` stops the pipeline and `s` opens the slide list.
 
@@ -346,6 +348,27 @@ Two tests use real polars and Pillow and are skipped unless you point them at a 
 ## PANDA 1st-place ensemble
 
 `pnd/pnd_predict.py` runs the model ensemble that won the PANDA challenge (team PND) on your slides, on a CPU, as a benchmark for the Gleason classifier. It uses their published weights, which are licensed CC-BY-NC, for non-commercial use only. See [pnd/README.md](pnd/README.md) for setup and options.
+
+From Emacs:
+
+| Key | What it does |
+| --- | --- |
+| `C-c h p` | Grades every slide. Slides that are already graded are skipped, so a stopped run continues where it left off. |
+| `C-u C-c h p` | Asks for the speed, whether to use only held-out models, and whether to regrade, then grades every slide. |
+| `p` in the slide list | Grades the slide on that line (it is regraded if it was graded before). |
+| `C-c h P` | Opens the results, `tiles/pnd_slides.csv`. |
+
+The slide list gains a **PND** column with the predicted ISUP grade and a **True** column with the grade from train.csv. The first run clones their repository, which holds the weights (about 350 MB), into the folder above the tiles folder. It needs `git`; without git, download the repository's ZIP and unzip it there as `Kaggle-PANDA-1st-place-solution`. The venv needs the packages from [pnd/README.md](pnd/README.md#setup-windows-cpu).
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `histopipe-pnd-speed` | `full` | `full` (12-view TTA, minutes per slide), `no-tta` (under a minute) or `fast` (one model of each kind, seconds) |
+| `histopipe-pnd-holdout` | `t` | use only the models that never trained on each slide; keep it on for PANDA train slides |
+| `histopipe-pnd-directory` | `nil` | the repository with the weights; `nil` means `Kaggle-PANDA-1st-place-solution` next to the tiles folder |
+| `histopipe-pnd-script` | `nil` | `pnd_predict.py`; `nil` finds `pnd/pnd_predict.py` next to histopipe.el, or `pnd_predict.py` next to the tiles folder |
+| `histopipe-pnd-threads` | `nil` | CPU threads for torch |
+
+From the command line:
 
 ```bat
 python pnd\pnd_predict.py slides --pnd-dir Kaggle-PANDA-1st-place-solution --holdout

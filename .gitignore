@@ -7,3 +7,4 @@ test/w/csv/
 test/w/status-tiles/
 __pycache__/
 *.elc
+test/w/pnd-tiles/
