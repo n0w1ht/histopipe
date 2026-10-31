@@ -63,8 +63,9 @@
 ;; "tumour glands"; names go into the legend and summary.csv.
 ;;
 ;; Slides can be downloaded from the PANDA Kaggle competition with the
-;; kaggle CLI (pip install kaggle in the same venv, kaggle.json in
-;; ~/.kaggle/, competition rules accepted on the website):
+;; kaggle CLI (pip install kaggle in the same venv, KAGGLE_API_TOKEN in
+;; the environment Emacs starts with, competition rules accepted on the
+;; website):
 ;; `C-c h d' downloads slides by id, such as
 ;; 0005f7aaab2800f6170c399693a96917, with their label masks, and
 ;; `C-c h D' picks N slides of one data provider (radboud by default)
@@ -467,9 +468,9 @@ non-nil a failure does not stop the queue."
                      (histopipe--output-has process start "has no attribute 'groupby'"))
             (histopipe--log "    Your polars is too new for HistoEncoder: pip install \"polars<1\" in the venv."))
           (when (cl-some (lambda (s) (histopipe--output-has process start s))
-                         '("401" "403" "Unauthorized" "Forbidden" "kaggle.json"))
-            (histopipe--log "    Kaggle refused the download.  Put kaggle.json (Kaggle > Settings > API)
-    in ~/.kaggle/ and accept the rules at https://www.kaggle.com/c/%s/rules"
+                         '("401" "403" "Unauthorized" "Forbidden" "kaggle.json" "Authentication required"))
+            (histopipe--log "    Kaggle refused the download.  Set KAGGLE_API_TOKEN (Kaggle > Settings > API)
+    in the environment Emacs starts with and accept the rules at https://www.kaggle.com/c/%s/rules"
                             histopipe-kaggle-competition))
           (message "histopipe: %s failed" name)))))))
 

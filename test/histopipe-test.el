@@ -91,6 +91,10 @@
    (message "%s" (log-text))
    (should (string-match-p "accept the rules" (log-text)))
    (should-not (file-exists-p (expand-file-name "k/slides/after1.tiff" w)))))
+(ert-deftest histopipe-download-no-token ()
+  (with-kaggle
+   (histopipe-download-slides '("noauth1") nil) (wait-done)
+   (should (string-match-p "Set KAGGLE_API_TOKEN" (log-text)))))
 (ert-deftest histopipe-sample ()
   (with-kaggle
    (delete-directory (expand-file-name "k" w) t)

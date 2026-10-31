@@ -128,7 +128,7 @@ PANDA slides are large (often 100 MB or more each), so download a handful at a t
 
 **One-time setup:**
 
-1. On Kaggle, open *Settings → API → Create New Token*. Save the `kaggle.json` file it gives you in `~/.kaggle/` (on Windows, `C:\Users\<you>\.kaggle\`).
+1. On Kaggle, open *Settings → API → Generate New Token*. Put the token in the `KAGGLE_API_TOKEN` environment variable, where Emacs can see it: an `export` in `~/.bashrc` only reaches an Emacs started from that terminal. On a systemd Linux desktop, put `KAGGLE_API_TOKEN=<token>` in `~/.config/environment.d/kaggle.conf` (`chmod 600`) and log in again.
 2. Accept the [competition rules](https://www.kaggle.com/c/prostate-cancer-grade-assessment/rules). Without this, Kaggle refuses every download.
 
 **Commands:**
@@ -320,7 +320,7 @@ Your polars is 1.0 or newer. Run `pip install "polars<1"` in the venv. The log s
 You have an older histopipe.el that ran `HistoPrep.exe` directly. On Windows that program expands `*.tiff` into a list of file names before reading it. Update histopipe.el; it now starts HistoPrep through Python.
 
 **A download fails with 401 or 403.**
-`kaggle.json` is missing from `~/.kaggle/`, or you haven't accepted the competition rules. See [Downloading slides from Kaggle](#downloading-slides-from-kaggle).
+`KAGGLE_API_TOKEN` isn't set in the environment Emacs started with (check with `M-x getenv`), or you haven't accepted the competition rules. See [Downloading slides from Kaggle](#downloading-slides-from-kaggle).
 
 **"… is not tiled yet" when pressing `x`, `v` or `RET` in the slide list.**
 The slide is downloaded but hasn't been through the pipeline. Run `C-c h r`.
