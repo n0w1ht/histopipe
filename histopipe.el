@@ -63,13 +63,14 @@
 ;; "tumour glands"; names go into the legend and summary.csv.
 ;;
 ;; Slides can be downloaded from the PANDA Kaggle competition with the
-;; kaggle CLI (pip install kaggle in the same venv, KAGGLE_API_TOKEN in
-;; the environment Emacs starts with, competition rules accepted on the
-;; website):
+;; kaggle CLI (pip install kaggle in the same venv, your API token in
+;; ~/.config/kaggle/access_token or KAGGLE_API_TOKEN, competition rules
+;; accepted on the website):
 ;; `C-c h d' downloads slides by id, such as
 ;; 0005f7aaab2800f6170c399693a96917, with their label masks, and
 ;; `C-c h D' picks N slides of one data provider (radboud by default)
-;; spread over ISUP grades, using train.csv.
+;; spread over ISUP grades, using train.csv.  `C-c h u' unpacks slides
+;; and masks that were downloaded but left zipped.
 ;;
 ;; `C-c h p' grades every slide with the PANDA challenge's winning
 ;; ensemble (team PND, pnd/pnd_predict.py), cloning their weights
@@ -179,6 +180,12 @@ cluster names."
 (defcustom histopipe-kaggle-competition "prostate-cancer-grade-assessment"
   "Kaggle competition that slides are downloaded from (PANDA)."
   :type 'string)
+
+(defcustom histopipe-kaggle-token-file "~/.config/kaggle/access_token"
+  "File holding your Kaggle API token, used when KAGGLE_API_TOKEN is unset.
+The kaggle CLI is given the file's path in KAGGLE_API_TOKEN and
+reads the token itself.  nil means only the environment is used."
+  :type '(choice (const :tag "Environment only" nil) file))
 
 (defcustom histopipe-masks-directory "~/histo/masks"
   "Folder for downloaded label masks (<id>_mask.tiff)."
@@ -420,6 +427,7 @@ the queue."
         (histopipe--log "%s" (mapconcat #'shell-quote-argument (cdr command) " "))
         (let ((process-environment (append '("PYTHONUTF8=1" "PYTHONIOENCODING=utf-8"
                                              "PYTHONUNBUFFERED=1")
+                                           (histopipe--kaggle-environment)
                                            process-environment))
               (buffer (histopipe--log-buffer)))
           (setq histopipe--process
@@ -469,8 +477,9 @@ non-nil a failure does not stop the queue."
             (histopipe--log "    Your polars is too new for HistoEncoder: pip install \"polars<1\" in the venv."))
           (when (cl-some (lambda (s) (histopipe--output-has process start s))
                          '("401" "403" "Unauthorized" "Forbidden" "kaggle.json" "Authentication required"))
-            (histopipe--log "    Kaggle refused the download.  Set KAGGLE_API_TOKEN (Kaggle > Settings > API)
-    in the environment Emacs starts with and accept the rules at https://www.kaggle.com/c/%s/rules"
+            (histopipe--log "    Kaggle refused the download.  Save your API token (Kaggle > Settings > API)
+    in %s or set KAGGLE_API_TOKEN, and accept the rules at https://www.kaggle.com/c/%s/rules"
+                            (or histopipe-kaggle-token-file "a token file")
                             histopipe-kaggle-competition))
           (message "histopipe: %s failed" name)))))))
 
@@ -550,6 +559,17 @@ With a prefix argument, ask for the numbers of CLUSTERS."
 
 (defun histopipe--masks () (file-name-as-directory (expand-file-name histopipe-masks-directory)))
 
+(defun histopipe--kaggle-token-file ()
+  "`histopipe-kaggle-token-file' expanded, or nil when it is unset or missing."
+  (and histopipe-kaggle-token-file
+       (let ((file (expand-file-name histopipe-kaggle-token-file)))
+         (and (file-readable-p file) file))))
+
+(defun histopipe--kaggle-environment ()
+  "KAGGLE_API_TOKEN=<token file> when the environment has no token yet."
+  (let ((file (and (not (getenv "KAGGLE_API_TOKEN")) (histopipe--kaggle-token-file))))
+    (and file (list (concat "KAGGLE_API_TOKEN=" file)))))
+
 (defun histopipe--slide-id (string)
   "Slide id in STRING, such as a file name, path or mask name."
   (let ((name (file-name-nondirectory (string-trim string))))
@@ -563,32 +583,71 @@ removed.  With OPTIONAL non-nil, a failure does not stop the queue."
          (local (expand-file-name file dir)))
     (list (format "download %s" file)
           (lambda ()
-            (if (and (file-exists-p local) (not histopipe--overwrite))
-                (format "%s already in %s, skipping" file dir)
+            (cond
+             ((and (file-exists-p local) (not histopipe--overwrite))
+              (format "%s already in %s, skipping" file dir))
+             ((and (histopipe--downloaded-p local remote) (not histopipe--overwrite))
+              (push (histopipe--unzip-step local remote) histopipe--queue)
+              (format "%s downloaded earlier, unpacking it" file))
+             (t
               (make-directory dir t)
               ;; The unzip item runs right after this download.
-              (push (list (format "unzip %s" file)
-                          (lambda () (histopipe--unzip-command local)))
-                    histopipe--queue)
+              (push (histopipe--unzip-step local remote) histopipe--queue)
               (cons (format "%s from Kaggle" remote)
                     (append (list (histopipe--executable "kaggle")
                                   "competitions" "download"
                                   "-f" remote "-p" (directory-file-name dir))
                             (and histopipe--overwrite '("-o"))
-                            (list histopipe-kaggle-competition)))))
+                            (list histopipe-kaggle-competition))))))
           optional)))
 
-(defun histopipe--unzip-command (local)
-  "Command that unpacks LOCAL.zip (or its .zip twin) and deletes the zip, or :done."
-  (let ((zip (cl-find-if #'file-exists-p
-                         (list (concat local ".zip")
-                               (concat (file-name-sans-extension local) ".zip")))))
+(defun histopipe--unzip-step (local remote)
+  "Queue item that unpacks the download of REMOTE into LOCAL."
+  (list (format "unzip %s" (file-name-nondirectory local))
+        (lambda () (histopipe--unzip-command local remote))))
+
+(defun histopipe--nested (local remote)
+  "Where recent kaggle CLIs save REMOTE when asked for LOCAL, or nil.
+They keep REMOTE's folder, so train_images/x.tiff lands in
+train_images/ under the download folder."
+  (and remote (file-name-directory remote)
+       (expand-file-name (file-name-nondirectory local)
+                         (expand-file-name (file-name-directory remote)
+                                           (file-name-directory local)))))
+
+(defun histopipe--zip (local remote)
+  "The zip Kaggle saved for LOCAL (see `histopipe--nested'), or nil."
+  (cl-find-if #'file-exists-p
+              (cl-loop for f in (delq nil (list local (histopipe--nested local remote)))
+                       append (list (concat f ".zip")
+                                    (concat (file-name-sans-extension f) ".zip")))))
+
+(defun histopipe--downloaded-p (local remote)
+  "Non-nil when REMOTE was downloaded for LOCAL but not unpacked yet."
+  (let ((nested (histopipe--nested local remote)))
+    (or (histopipe--zip local remote) (and nested (file-exists-p nested)))))
+
+(defun histopipe--unzip-command (local &optional remote)
+  "Command that unpacks LOCAL.zip (or its .zip twin) and deletes the zip, or :done.
+A file saved under REMOTE's folder (see `histopipe--nested') is
+unpacked or moved next to LOCAL, and the emptied folder removed."
+  (let* ((dir (file-name-directory local))
+         (nested (histopipe--nested local remote))
+         (sub (and nested (file-name-directory nested)))
+         (zip (histopipe--zip local remote)))
+    (when (and nested (file-exists-p nested) (not (file-exists-p local)))
+      (rename-file nested local))
+    (when (and sub (file-directory-p sub) (not zip)
+               (null (directory-files sub nil directory-files-no-dot-files-regexp)))
+      (delete-directory sub))
     (if (null zip)
         :done
       (cons (format "unpacking %s" (file-name-nondirectory zip))
             (list (histopipe--executable "python") "-c"
-                  "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2]); os.remove(sys.argv[1])"
-                  zip (directory-file-name (file-name-directory local)))))))
+                  "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2]); os.remove(sys.argv[1])
+try: os.rmdir(os.path.dirname(sys.argv[1]))
+except OSError: pass"
+                  zip (directory-file-name dir))))))
 
 (defun histopipe--slide-steps (ids masks)
   "Queue items that download slides IDS, and their label masks if MASKS."
@@ -634,6 +693,25 @@ prefix argument."
   (histopipe-run-steps
    (list (histopipe--kaggle-step "train.csv" (file-name-directory (expand-file-name histopipe-train-csv))))
    nil (lambda () (histopipe--log "Finished: %s" (expand-file-name histopipe-train-csv)))))
+
+;;;###autoload
+(defun histopipe-unpack-downloads ()
+  "Unpack slides and masks that were downloaded but are still zipped.
+This covers zips left in the slides and masks folders and in their
+train_images/ and train_label_masks/ subfolders."
+  (interactive)
+  (let (steps seen)
+    (pcase-dolist (`(,dir ,sub ,suffix) `((,(histopipe--slides) "train_images/" ".tiff")
+                                         (,(histopipe--masks) "train_label_masks/" "_mask.tiff")))
+      (dolist (file (append (file-expand-wildcards (concat dir "*.zip"))
+                            (file-expand-wildcards (concat dir sub "*.zip"))
+                            (file-expand-wildcards (concat dir sub "*.tiff"))))
+        (let ((name (concat (histopipe--slide-id file) suffix)))
+          (unless (member name seen)
+            (push name seen)
+            (push (histopipe--unzip-step (expand-file-name name dir) (concat sub name)) steps)))))
+    (unless steps (user-error "Nothing to unpack"))
+    (histopipe-run-steps (nreverse steps) nil #'histopipe--download-summary)))
 
 (defun histopipe--read-train-csv ()
   "Rows of `histopipe-train-csv' as alists keyed by column name."
@@ -1303,6 +1381,7 @@ ASK, the options are asked for first, as in `histopipe-pnd-predict-all'."
     (define-key map (kbd "v") #'histopipe-view-slide)
     (define-key map (kbd "d") #'histopipe-download-slides)
     (define-key map (kbd "D") #'histopipe-download-sample)
+    (define-key map (kbd "u") #'histopipe-unpack-downloads)
     (define-key map (kbd "x") #'histopipe-parquet-to-csv)
     (define-key map (kbd "n") #'histopipe-name-clusters)
     (define-key map (kbd "V") #'histopipe-view-all)

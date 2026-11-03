@@ -63,7 +63,10 @@
          (histopipe-slides-directory (expand-file-name "k/slides" w))
          (histopipe-masks-directory (expand-file-name "k/masks" w))
          (histopipe-train-csv (expand-file-name "k/train.csv" w))
-         (histopipe-tiles-directory (expand-file-name "k/tiles" w)))
+         (histopipe-tiles-directory (expand-file-name "k/tiles" w))
+         (histopipe-kaggle-token-file nil)
+         (process-environment (copy-sequence process-environment)))
+     (setenv "KAGGLE_API_TOKEN")
      ,@body))
 
 (ert-deftest histopipe-slide-id ()
@@ -73,18 +76,56 @@
 (ert-deftest histopipe-download-ids ()
   (with-kaggle
    (delete-directory (expand-file-name "k" w) t)
-   (histopipe-download-slides '("0005f7aaab2800f6170c399693a96917.tiff" "zipped1" "nomask1") t)
+   (histopipe-download-slides '("0005f7aaab2800f6170c399693a96917.tiff" "zipped1" "flatzipped1" "nomask1") t)
    (wait-done) (message "%s" (log-text))
    (should (file-exists-p (expand-file-name "k/slides/0005f7aaab2800f6170c399693a96917.tiff" w)))
    (should (file-exists-p (expand-file-name "k/masks/0005f7aaab2800f6170c399693a96917_mask.tiff" w)))
    (should (file-exists-p (expand-file-name "k/slides/zipped1.tiff" w)))
    (should-not (file-exists-p (expand-file-name "k/slides/zipped1.tiff.zip" w)))
+   (should (file-exists-p (expand-file-name "k/slides/flatzipped1.tiff" w)))
+   (should-not (file-exists-p (expand-file-name "k/slides/flatzipped1.tiff.zip" w)))
    (should (file-exists-p (expand-file-name "k/slides/nomask1.tiff" w)))
+   ;; Files the CLI saved under train_images/ were moved up.
+   (should-not (file-exists-p (expand-file-name "k/slides/train_images" w)))
+   (should-not (file-exists-p (expand-file-name "k/masks/train_label_masks" w)))
    (should (string-match-p "failed (exit 1), continuing" (log-text)))
-   (should (string-match-p "Finished: 3 slides" (log-text)))
+   (should (string-match-p "Finished: 4 slides" (log-text)))
    ;; second time everything is skipped
    (histopipe-download-slides '("zipped1") nil) (wait-done)
    (should (string-match-p "zipped1.tiff already in" (log-text)))))
+(ert-deftest histopipe-unpack-downloads ()
+  (with-kaggle
+   (delete-directory (expand-file-name "k" w) t)
+   ;; Zips and a plain mask left in the subfolders by an older histopipe.
+   (let ((default-directory (expand-file-name "k/slides/train_images/" w)))
+     (make-directory default-directory t)
+     (write-region "data\n" nil "a1.tiff")
+     (call-process "python3" nil nil nil "-m" "zipfile" "-c" "a1.tiff.zip" "a1.tiff")
+     (delete-file "a1.tiff"))
+   (make-directory (expand-file-name "k/masks/train_label_masks" w) t)
+   (write-region "data\n" nil (expand-file-name "k/masks/train_label_masks/a1_mask.tiff" w))
+   (histopipe-unpack-downloads) (wait-done)
+   (message "%s" (log-text))
+   (should (file-exists-p (expand-file-name "k/slides/a1.tiff" w)))
+   (should (file-exists-p (expand-file-name "k/masks/a1_mask.tiff" w)))
+   (should-not (file-exists-p (expand-file-name "k/slides/train_images" w)))
+   (should-not (file-exists-p (expand-file-name "k/masks/train_label_masks" w)))
+   (should (string-match-p "Finished: 1 slides" (log-text)))
+   (should-error (histopipe-unpack-downloads) :type 'user-error)))
+(ert-deftest histopipe-download-earlier ()
+  (with-kaggle
+   (delete-directory (expand-file-name "k" w) t)
+   ;; A zip left in train_images/ is unpacked, not downloaded again.
+   (let ((default-directory (expand-file-name "k/slides/train_images/" w)))
+     (make-directory default-directory t)
+     (write-region "data\n" nil "b1.tiff")
+     (call-process "python3" nil nil nil "-m" "zipfile" "-c" "b1.tiff.zip" "b1.tiff")
+     (delete-file "b1.tiff"))
+   (write-region "" nil (getenv "LOGF"))
+   (histopipe-download-slides '("b1") nil) (wait-done)
+   (should (string-match-p "downloaded earlier" (log-text)))
+   (should (file-exists-p (expand-file-name "k/slides/b1.tiff" w)))
+   (should-not (string-match-p "b1" (with-temp-buffer (insert-file-contents (getenv "LOGF")) (buffer-string))))))
 (ert-deftest histopipe-download-denied ()
   (with-kaggle
    (histopipe-download-slides '("denied1" "after1") nil) (wait-done)
@@ -94,7 +135,26 @@
 (ert-deftest histopipe-download-no-token ()
   (with-kaggle
    (histopipe-download-slides '("noauth1") nil) (wait-done)
-   (should (string-match-p "Set KAGGLE_API_TOKEN" (log-text)))))
+   (should (string-match-p "Save your API token" (log-text)))))
+(ert-deftest histopipe-download-token-file ()
+  (with-kaggle
+   (delete-directory (expand-file-name "k" w) t)
+   (let ((histopipe-kaggle-token-file (expand-file-name "k/access_token" w))
+         (got (lambda (id) (with-temp-buffer
+                             (insert-file-contents (expand-file-name (format "k/slides/%s.tiff" id) w))
+                             (string-trim (buffer-string))))))
+     ;; No file: nothing is passed on.
+     (histopipe-download-slides '("token1") nil) (wait-done)
+     (should (equal (funcall got "token1") "unset"))
+     ;; The file's path is passed, not its contents.
+     (make-directory (expand-file-name "k" w) t)
+     (write-region "secret\n" nil histopipe-kaggle-token-file)
+     (histopipe-download-slides '("token2") nil) (wait-done)
+     (should (equal (funcall got "token2") histopipe-kaggle-token-file))
+     ;; A token already in the environment wins.
+     (setenv "KAGGLE_API_TOKEN" "fromenv")
+     (histopipe-download-slides '("token3") nil) (wait-done)
+     (should (equal (funcall got "token3") "fromenv")))))
 (ert-deftest histopipe-sample ()
   (with-kaggle
    (delete-directory (expand-file-name "k" w) t)

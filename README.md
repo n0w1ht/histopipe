@@ -128,7 +128,15 @@ PANDA slides are large (often 100 MB or more each), so download a handful at a t
 
 **One-time setup:**
 
-1. On Kaggle, open *Settings → API → Generate New Token*. Put the token in the `KAGGLE_API_TOKEN` environment variable, where Emacs can see it: an `export` in `~/.bashrc` only reaches an Emacs started from that terminal. On a systemd Linux desktop, put `KAGGLE_API_TOKEN=<token>` in `~/.config/environment.d/kaggle.conf` (`chmod 600`) and log in again.
+1. On Kaggle, open *Settings → API → Generate New Token*. Save the token, on its own, in `~/.config/kaggle/access_token` and make it private:
+
+   ```sh
+   mkdir -p ~/.config/kaggle
+   printf '%s\n' '<token>' > ~/.config/kaggle/access_token
+   chmod 600 ~/.config/kaggle/access_token
+   ```
+
+   histopipe passes the file's path to the kaggle CLI in `KAGGLE_API_TOKEN`, so Emacs never reads the token and no restart is needed. Use another file by setting `histopipe-kaggle-token-file`. A `KAGGLE_API_TOKEN` already in Emacs's environment takes precedence.
 2. Accept the [competition rules](https://www.kaggle.com/c/prostate-cancer-grade-assessment/rules). Without this, Kaggle refuses every download.
 
 **Commands:**
@@ -138,6 +146,7 @@ PANDA slides are large (often 100 MB or more each), so download a handful at a t
 | `C-c h d` | `histopipe-download-slides` | Downloads the slides you name, with their masks. Paste ids or file names, such as `0005f7aaab2800f6170c399693a96917.tiff`, separated by spaces or commas. An id under the cursor is offered as the default. |
 | `C-u C-c h d` | | The same without masks (or with them, if `histopipe-download-masks` is nil). |
 | `C-c h D` | `histopipe-download-sample` | Downloads `train.csv` if needed, then picks N slides you don't have yet from one data provider, spread evenly over ISUP grades 0 to 5. |
+| `C-c h u` | `histopipe-unpack-downloads` | Unpacks slides and masks that were downloaded but are still zipped, including any left in `train_images/` or `train_label_masks/` subfolders by older versions of histopipe. |
 
 Choose **radboud** for Gleason work: its masks mark stroma, benign tissue and Gleason patterns 3, 4 and 5. **karolinska** masks only mark benign versus cancer.
 
@@ -256,6 +265,7 @@ Bind `histopipe-command-map` to a prefix, here `C-c h`:
 | `C-c h n` | `histopipe-name-clusters` |
 | `C-c h d` | `histopipe-download-slides` |
 | `C-c h D` | `histopipe-download-sample` |
+| `C-c h u` | `histopipe-unpack-downloads` |
 | `C-c h x` | `histopipe-parquet-to-csv` |
 | `C-c h p` | `histopipe-pnd-predict-all`: grade every slide with the PANDA ensemble |
 | `C-c h P` | `histopipe-pnd-results`: open `pnd_slides.csv` |
@@ -296,6 +306,7 @@ In the `*histopipe*` log, `k` stops the pipeline and `s` opens the slide list.
 | `histopipe-view-script` | `nil` | Your own view script instead of the built-in views |
 | **Downloads and CSV** | | |
 | `histopipe-kaggle-competition` | `"prostate-cancer-grade-assessment"` | Kaggle competition |
+| `histopipe-kaggle-token-file` | `"~/.config/kaggle/access_token"` | File with your Kaggle API token, used when `KAGGLE_API_TOKEN` is unset |
 | `histopipe-download-masks` | `t` | Download masks with slides |
 | `histopipe-csv-decimals` | `4` | Decimals kept in CSV files |
 
@@ -320,7 +331,7 @@ Your polars is 1.0 or newer. Run `pip install "polars<1"` in the venv. The log s
 You have an older histopipe.el that ran `HistoPrep.exe` directly. On Windows that program expands `*.tiff` into a list of file names before reading it. Update histopipe.el; it now starts HistoPrep through Python.
 
 **A download fails with 401 or 403.**
-`KAGGLE_API_TOKEN` isn't set in the environment Emacs started with (check with `M-x getenv`), or you haven't accepted the competition rules. See [Downloading slides from Kaggle](#downloading-slides-from-kaggle).
+There's no token in `~/.config/kaggle/access_token` (or `histopipe-kaggle-token-file`) or in `KAGGLE_API_TOKEN` (check with `M-x getenv`), the token is wrong or revoked, or you haven't accepted the competition rules. See [Downloading slides from Kaggle](#downloading-slides-from-kaggle).
 
 **"… is not tiled yet" when pressing `x`, `v` or `RET` in the slide list.**
 The slide is downloaded but hasn't been through the pipeline. Run `C-c h r`.
