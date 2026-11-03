@@ -57,6 +57,40 @@
     (with-current-buffer "*histopipe-status*"
       (should (string-match-p "a +1 +yes +yes" (buffer-string)))
       (should (string-match-p "b +- +- +-" (buffer-string))))))
+(ert-deftest histopipe-status-keys ()
+  (let ((histopipe-slides-directory (expand-file-name "slides" w))
+        (histopipe-tiles-directory (expand-file-name "status-tiles" w)))
+    (cl-flet ((keys () (with-current-buffer "*histopipe-status*"
+                         (cl-loop for ov in (overlays-in (point-min) (point-max))
+                                  when (overlay-get ov 'histopipe-keys)
+                                  collect (list (overlay-start ov) (overlay-get ov 'before-string))))))
+      (histopipe-status)
+      (should (= (length (keys)) 1))
+      (should (string-match-p "RET open slide  d folder.*thumbnail" (cadr (car (keys)))))
+      ;; Still once, at the top, after a refresh, a sort and a second call.
+      (with-current-buffer "*histopipe-status*"
+        (revert-buffer)
+        (goto-char (point-min)) (tabulated-list-sort 1))
+      (histopipe-status)
+      (should (equal (mapcar #'car (keys)) '(1)))
+      (with-current-buffer "*histopipe-status*"
+        ;; The column names come right after the summary, above the rows.
+        (should-not header-line-format)
+        (goto-char (point-min))
+        (should (string-match-p "Slide.*Tiles.*Features.*Clusters"
+                                (buffer-substring (point) (line-end-position))))
+        (should (string-match-p "a +1 +yes" (buffer-string)))
+        (revert-buffer) (goto-char (point-min))
+        (should (string-match-p "Slide.*Tiles" (buffer-substring (point) (line-end-position)))))
+      ;; The mode's help lists the keys.
+      (should (string-match-p "histopipe-status-thumbnail" (documentation 'histopipe-status-mode)))
+      (let ((histopipe-status-show-keys nil))
+        (histopipe-status)
+        (should-not (keys))
+        (with-current-buffer "*histopipe-status*"
+          (should header-line-format)
+          (goto-char (point-min))
+          (should-not (string-match-p "Slide" (buffer-substring (point) (line-end-position)))))))))
 
 (defmacro with-kaggle (&rest body)
   `(let ((histopipe-venv (expand-file-name "venv" w))
@@ -198,6 +232,23 @@ and HISTOPIPE_TEST_PARQUET: a folder with features.parquet and clusters.parquet.
     (let ((histopipe-view-script "v.py"))
       (should-error (histopipe-view-slide "abc") :type 'user-error))))
 
+(ert-deftest histopipe-open-slide ()
+  (let ((histopipe-slides-directory (expand-file-name "slides" w))
+        (histopipe-slide-viewer (expand-file-name "venv/bin/viewer" w))
+        (logf (getenv "LOGF")))
+    (write-region "" nil logf)
+    (histopipe-status-open-slide "a")
+    (with-timeout (5 (error "viewer did not run"))
+      (while (zerop (file-attribute-size (file-attributes logf))) (sleep-for 0.05)))
+    (should (equal (with-temp-buffer (insert-file-contents logf) (buffer-string))
+                   (format "VIEWER %s\n" (expand-file-name "slides/a.tiff" w))))
+    (should (string-match-p "abc is not in"
+                            (cadr (should-error (histopipe-status-open-slide "abc") :type 'user-error))))
+    (let ((histopipe-slide-viewer "no-such-viewer-xyz"))
+      (should-error (histopipe-status-open-slide "a") :type 'user-error))
+    ;; RET opens the slide, d its folder.
+    (should (eq (lookup-key histopipe-status-mode-map (kbd "RET")) #'histopipe-status-open-slide))
+    (should (eq (lookup-key histopipe-status-mode-map (kbd "d")) #'histopipe-status-open))))
 (ert-deftest histopipe-views-and-names ()
   "Needs HISTOPIPE_POLARS_VENVS (venvs with polars and pillow) and
 HISTOPIPE_TEST_VIEWS: a slide folder with tiles/, clusters.parquet and thumbnail.jpeg."

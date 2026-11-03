@@ -182,19 +182,28 @@ Slide                                   Tiles  Features  Clusters
 0005f7aaab2800f6170c399693a96917            -  -         -
 ```
 
-A `-` under Tiles means the slide is downloaded but not tiled yet.
+A `-` under Tiles means the slide is downloaded but not tiled yet. PND is the ISUP grade predicted by the PANDA ensemble and True the grade in `train.csv`.
+
+A summary of the keys is shown above the list, with the column names right below it; `?` lists every key. Set `histopipe-status-show-keys` to nil to hide the summary and keep the column names fixed in the header line instead.
+
+Ordinary image viewers can struggle with whole-slide images, which are often tens of thousands of pixels across. For a viewer made for them, install [QuPath](https://qupath.github.io/) and set `histopipe-slide-viewer` to its program, for example `"QuPath"` (it must be on `exec-path`) or its full path.
 
 | Key | What it does on the slide under the cursor |
 |-----|--------------------------------------------|
-| `RET` | Opens its folder in Dired. |
+| `RET` | Opens the slide in an external program: your system's default for `.tiff` files, or `histopipe-slide-viewer`. |
+| `d` | Opens its folder in Dired. |
 | `t` | Shows the thumbnail with its tiles drawn on. |
 | `v` | Makes its cluster views and opens them. `C-u v` asks which clustering to show. |
 | `n` | Names its clusters, one grid at a time. |
 | `x` | Writes all its parquet files as CSV. |
+| `p` | Grades it with the PANDA ensemble (see [PANDA 1st-place ensemble](#panda-1st-place-ensemble)). |
+| `P` | Opens the ensemble's results, `pnd_slides.csv`. |
 | `r` | Runs the pipeline. |
 | `k` | Stops the pipeline. |
 | `l` | Shows the `*histopipe*` log. |
 | `g` | Refreshes the list. |
+| `S` | Sorts by the column under the cursor; again to reverse. |
+| `?` | Lists every key. |
 
 ## Cluster views
 
@@ -303,6 +312,8 @@ In the `*histopipe*` log, `k` stops the pipeline and `s` opens the slide list.
 | `histopipe-view-tiles-per-cluster` | `16` | Example tiles per grid |
 | `histopipe-view-tile-px` | `128` | Size of each example tile |
 | `histopipe-views-after-cluster` | `t` | Make views automatically after clustering |
+| `histopipe-slide-viewer` | `nil` | Program `RET` opens slides with; nil is the system default |
+| `histopipe-status-show-keys` | `t` | Show a key summary above the slide list |
 | `histopipe-view-script` | `nil` | Your own view script instead of the built-in views |
 | **Downloads and CSV** | | |
 | `histopipe-kaggle-competition` | `"prostate-cancer-grade-assessment"` | Kaggle competition |

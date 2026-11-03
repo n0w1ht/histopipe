@@ -773,7 +773,8 @@ missing.  MASKS is as in `histopipe-download-slides'."
 
 (defvar histopipe-status-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'histopipe-status-open)
+    (define-key map (kbd "RET") #'histopipe-status-open-slide)
+    (define-key map (kbd "d") #'histopipe-status-open)
     (define-key map (kbd "t") #'histopipe-status-thumbnail)
     (define-key map (kbd "v") #'histopipe-view-slide)
     (define-key map (kbd "x") #'histopipe-slide-to-csv)
@@ -782,17 +783,66 @@ missing.  MASKS is as in `histopipe-download-slides'."
     (define-key map (kbd "P") #'histopipe-pnd-results)
     (define-key map (kbd "r") #'histopipe-run)
     (define-key map (kbd "k") #'histopipe-stop)
-    (define-key map (kbd "l") (lambda () (interactive) (pop-to-buffer (histopipe--log-buffer))))
+    (define-key map (kbd "l") #'histopipe-show-log)
     map)
   "Keymap for `histopipe-status-mode'.")
 
+(defcustom histopipe-slide-viewer nil
+  "Program that RET in the slide list opens slides with.
+nil means the system's default for the file: xdg-open on GNU/Linux,
+open on macOS, the file association on Windows.  A string is a
+program such as \"QuPath\", given the slide file as its argument."
+  :type '(choice (const :tag "System default" nil) string))
+
+(defcustom histopipe-status-show-keys t
+  "Non-nil shows a summary of the keys above the slide list."
+  :type 'boolean)
+
+(defconst histopipe--status-keys
+  '((("RET" . "open slide") ("d" . "folder") ("t" . "thumbnail") ("v" . "cluster views") ("n" . "name clusters")
+     ("x" . "CSV") ("p" . "PND grade") ("P" . "PND results"))
+    (("r" . "run pipeline") ("k" . "stop") ("l" . "log") ("g" . "refresh")
+     ("S" . "sort by column") ("?" . "all keys")))
+  "Lines of keys shown above the slide list.")
+
+(defun histopipe--status-keys-string ()
+  "The key summary shown above the slide list."
+  (concat
+   (mapconcat (lambda (line)
+                (mapconcat (lambda (key)
+                             (concat (propertize (car key) 'face 'help-key-binding) " " (cdr key)))
+                           line "  "))
+              histopipe--status-keys "\n")
+   "\n\n"))
+
+(defun histopipe-show-log ()
+  "Show the `*histopipe*' log."
+  (interactive)
+  (pop-to-buffer (histopipe--log-buffer)))
+
 (define-derived-mode histopipe-status-mode tabulated-list-mode "Histopipe-Status"
-  "Slides and how far the pipeline got with each."
+  "Slides and how far the pipeline got with each.
+Tiles is the number of tiles, or - when the slide is not tiled yet.
+Features and Clusters say whether those steps are done.  PND is the
+ISUP grade predicted by `histopipe-pnd-predict-slide' and True the
+grade in train.csv.  Commands act on the slide under the cursor:
+
+\\{histopipe-status-mode-map}"
   (setq tabulated-list-format [("Slide" 36 t) ("Tiles" 8 histopipe--sort-tiles :right-align t)
                                ("Features" 9 t) ("Clusters" 9 t) ("PND" 4 t) ("True" 4 t)])
   (setq tabulated-list-sort-key '("Slide"))
   (add-hook 'tabulated-list-revert-hook #'histopipe--status-entries nil t)
-  (tabulated-list-init-header))
+  ;; Under the key summary, print the column names in the buffer, right
+  ;; above the rows, rather than in the header line above the summary.
+  (setq tabulated-list-use-header-line (not histopipe-status-show-keys))
+  (tabulated-list-init-header)
+  (remove-overlays nil nil 'histopipe-keys t)
+  (when histopipe-status-show-keys
+    ;; An empty overlay at the start survives the erase in each reprint,
+    ;; and stays in front of the column names inserted there.
+    (let ((ov (make-overlay (point-min) (point-min))))
+      (overlay-put ov 'histopipe-keys t)
+      (overlay-put ov 'before-string (histopipe--status-keys-string)))))
 
 (defun histopipe--sort-tiles (a b)
   (< (string-to-number (aref (cadr a) 1)) (string-to-number (aref (cadr b) 1))))
@@ -851,6 +901,26 @@ Signal a clear error if it, or file NEEDED in it, is missing."
   "Open the output folder of SLIDE in Dired."
   (interactive (list (histopipe--read-slide)))
   (dired (histopipe--output-dir slide)))
+
+(declare-function w32-shell-execute "w32fns.c")
+
+(defun histopipe-status-open-slide (slide)
+  "Open the file of SLIDE in `histopipe-slide-viewer'."
+  (interactive (list (histopipe--read-slide)))
+  (let ((file (or (histopipe--slide-file slide)
+                  (user-error "%s is not in %s" slide (histopipe--slides)))))
+    (cond
+     (histopipe-slide-viewer
+      (call-process (or (executable-find histopipe-slide-viewer)
+                        (user-error "Cannot find %s; check `histopipe-slide-viewer'"
+                                    histopipe-slide-viewer))
+                    nil 0 nil file))
+     ((eq system-type 'windows-nt) (w32-shell-execute "open" file))
+     ((eq system-type 'darwin) (call-process "open" nil 0 nil file))
+     (t (call-process (or (executable-find "xdg-open")
+                          (user-error "No xdg-open; set `histopipe-slide-viewer'"))
+                      nil 0 nil file)))
+    (message "Opening %s" (file-name-nondirectory file))))
 
 (defun histopipe-status-thumbnail (slide)
   "Show the thumbnail of SLIDE with its tiles drawn on it."
