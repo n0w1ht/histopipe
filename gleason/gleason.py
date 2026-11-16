@@ -6,11 +6,19 @@ HistoPrep + HistoEncoder extract) has made tiles\<id>\features.parquet:
 
     python gleason.py label     tile labels from the PANDA Radboud masks
     python gleason.py train     fit the classifier, test it on held-out slides
-    python gleason.py predict   Gleason pattern per tile and score per slide
+    python gleason.py predict   Gleason pattern per tile; score, ISUP grade and
+                                share of each pattern in the tumour per slide
     python gleason.py evaluate  compare predicted ISUP grades with train.csv
 
 Folders default to .\tiles, .\masks, .\slides and .\train.csv; see
 `python gleason.py <command> --help`.
+
+Pattern shares ("80% Gleason pattern 4, 20% Gleason pattern 5") are the
+percent of predicted tumour tiles (G3 + G4 + G5) in each pattern. Every tile is
+the same size, so this approximates the share of tumour area; it counts every
+predicted tumour tile, including patterns below --min-share that the score
+ignores. They are printed per slide and saved as pct_G3, pct_G4, pct_G5 in
+tiles/gleason_slides.csv (blank for negative slides).
 
 Mask values (Radboud, red channel): 0 background, 1 stroma, 2 benign
 epithelium, 3/4/5 Gleason pattern 3/4/5.
@@ -216,6 +224,27 @@ def gleason_from_counts(counts, min_tumour_tiles, min_share):
     return f"{primary}+{secondary}", ISUP[(primary, secondary)], total
 
 
+def tumour_shares(counts):
+    """Percent of tumour tiles in each Gleason pattern {3: %, 4: %, 5: %},
+    whole numbers that add up to 100 (largest remainder), or {} if no tumour.
+    Tile counts stand in for area: each tile is one fixed-size square."""
+    tumour = {k: int(counts.get(k, 0) or 0) for k in (3, 4, 5)}
+    total = sum(tumour.values())
+    if not total:
+        return {}
+    exact = {k: 100 * n / total for k, n in tumour.items()}
+    pct = {k: int(v) for k, v in exact.items()}
+    for k in sorted(exact, key=lambda k: exact[k] - pct[k], reverse=True)[:100 - sum(pct.values())]:
+        pct[k] += 1
+    return pct
+
+
+def shares_text(pct):
+    """'80% Gleason pattern 4, 20% Gleason pattern 5', largest first, zeros left out."""
+    return ", ".join(f"{v}% Gleason pattern {k}"
+                     for k, v in sorted(pct.items(), key=lambda kv: (-kv[1], -kv[0])) if v)
+
+
 def draw_map(d, rows, slides):
     from PIL import Image, ImageDraw
     thumb_file = d / "thumbnail.jpeg"
@@ -264,17 +293,32 @@ def cmd_predict(a):
         score, isup, tumour = gleason_from_counts(counts, a.min_tumour_tiles, a.min_share)
         draw_map(d, rows, a.slides)
         status = "training" if d.name in bundle["train_ids"] else "held-out" if d.name in bundle["test_ids"] else "new"
+        pct = tumour_shares(counts) if score != "negative" else {}
         results.append([d.name, score, isup, tumour, len(pred)]
-                       + [counts[k] for k in CLASSES] + [status])
+                       + [counts[k] for k in CLASSES] + [status] + [pct.get(k, "") for k in (3, 4, 5)])
         print(f"{d.name}: Gleason {score:<8} ISUP {isup}  ({tumour} tumour of {len(pred)} tiles, {status} slide)")
+        if pct:
+            print(f"    tumour: {shares_text(pct)}")
     out = Path(a.tiles) / "gleason_slides.csv"
-    # Keep earlier results for slides not predicted this time.
+    header = (["slide", "gleason", "isup", "tumour_tiles", "tiles"]
+              + [f"n_{CLASSES[k]}" for k in CLASSES] + ["slide_set"]
+              + [f"pct_{CLASSES[k]}" for k in (3, 4, 5)])
+    # Keep earlier results for slides not predicted this time. Rows from a file
+    # written before the pct_ columns existed get them from their tile counts.
     done = {r[0] for r in results}
     if out.exists():
-        old = [list(r.values()) for r in read_csv(out) if r["slide"] not in done]
+        old = []
+        for r in read_csv(out):
+            if r["slide"] in done:
+                continue
+            if "pct_G3" not in r:
+                pct = tumour_shares({k: r.get(f"n_{CLASSES[k]}") for k in (3, 4, 5)}) \
+                    if r.get("gleason") != "negative" else {}
+                for k in (3, 4, 5):
+                    r[f"pct_{CLASSES[k]}"] = pct.get(k, "")
+            old.append([r.get(h, "") for h in header])
         results = sorted(old + results, key=lambda r: r[0])
-    write_csv(out, ["slide", "gleason", "isup", "tumour_tiles", "tiles"]
-              + [f"n_{CLASSES[k]}" for k in CLASSES] + ["slide_set"], results)
+    write_csv(out, header, results)
     print(f"\nWrote {out} and gleason_tiles.csv + gleason_map.jpg in each slide folder.")
 
 
@@ -340,7 +384,8 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_train)
 
-    p = sub.add_parser("predict", help="score slides")
+    p = sub.add_parser("predict", help="score slides and show the share of each Gleason pattern",
+                       description="Score slides. Per slide it prints the Gleason score, ISUP grade and the percent of tumour tiles in each pattern (tile counts approximate area), and writes them to tiles/gleason_slides.csv.")
     common(p, model=True, slides=True)
     p.add_argument("slides_ids", nargs="*", metavar="SLIDE", help="slide ids (default: all)")
     p.add_argument("--min-tumour-tiles", type=int, default=10, help="fewer tumour tiles = negative (default 10)")
