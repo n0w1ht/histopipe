@@ -8,3 +8,4 @@ test/w/status-tiles/
 __pycache__/
 *.elc
 test/w/pnd-tiles/
+test/w/gleason-tiles/

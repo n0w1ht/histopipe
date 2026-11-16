@@ -60,6 +60,11 @@
 (ert-deftest histopipe-status-keys ()
   (let ((histopipe-slides-directory (expand-file-name "slides" w))
         (histopipe-tiles-directory (expand-file-name "status-tiles" w)))
+    ;; Own fixture, so the test passes when run first or alone.
+    (make-directory (expand-file-name "a/tiles" histopipe-tiles-directory) t)
+    (dolist (f '("a/metadata.parquet" "a/features.parquet" "a/clusters.parquet"
+                 "a/tiles/x0_y0_w512_h512.jpeg"))
+      (write-region "" nil (expand-file-name f histopipe-tiles-directory)))
     (cl-flet ((keys () (with-current-buffer "*histopipe-status*"
                          (cl-loop for ov in (overlays-in (point-min) (point-max))
                                   when (overlay-get ov 'histopipe-keys)
@@ -329,3 +334,24 @@ HISTOPIPE_TEST_VIEWS: a slide folder with tiles/, clusters.parquet and thumbnail
       (should (member "clone" (cdr (funcall (nth 1 (histopipe--pnd-clone-step)))))))
     (let ((histopipe-pnd-script (expand-file-name "missing.py" w)))
       (should-error (histopipe-pnd-predict-all) :type 'user-error))))
+
+(ert-deftest histopipe-status-gleason ()
+  (let ((histopipe-slides-directory (expand-file-name "slides" w))
+        (histopipe-tiles-directory (expand-file-name "gleason-tiles" w)))
+    (delete-directory histopipe-tiles-directory t)
+    (make-directory histopipe-tiles-directory t)
+    (write-region (concat "slide,gleason,isup,tumour_tiles,tiles,n_stroma,n_benign,n_G3,n_G4,n_G5,slide_set,pct_G3,pct_G4,pct_G5\n"
+                          "a,4+5,5,50,90,30,10,0,40,10,held-out,0,80,20\n"
+                          "b,negative,0,3,73,50,20,3,0,0,new,,,\n")
+                  nil (expand-file-name "gleason_slides.csv" histopipe-tiles-directory))
+    (histopipe-status)
+    (with-current-buffer "*histopipe-status*"
+      (should (string-match-p "Gleason +Tumour" (buffer-string)))
+      (should (string-match-p "a .* 4\\+5 +G4 80% G5 20%" (buffer-string)))
+      (should (string-match-p "b .* negative +-" (buffer-string))))
+    ;; A file written before the pct_ columns existed still lists the score.
+    (write-region "slide,gleason,isup,tumour_tiles,tiles,n_stroma,n_benign,n_G3,n_G4,n_G5,slide_set\na,3+4,2,30,60,20,10,20,10,0,new\n"
+                  nil (expand-file-name "gleason_slides.csv" histopipe-tiles-directory))
+    (histopipe-status)
+    (with-current-buffer "*histopipe-status*"
+      (should (string-match-p "a .* 3\\+4 +-" (buffer-string))))))
