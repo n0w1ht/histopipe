@@ -826,14 +826,13 @@ Tiles is the number of tiles, or - when the slide is not tiled yet.
 Features and Clusters say whether those steps are done.  PND is the
 ISUP grade predicted by `histopipe-pnd-predict-slide' and True the
 grade in train.csv.  Gleason is the score from gleason/gleason.py
-predict and Tumour the share of its tumour tiles in each Gleason
-pattern, from tiles/gleason_slides.csv.  Commands act on the slide
-under the cursor:
+predict, read from tiles/gleason_slides.csv.  Commands act on the
+slide under the cursor:
 
 \\{histopipe-status-mode-map}"
   (setq tabulated-list-format [("Slide" 36 t) ("Tiles" 8 histopipe--sort-tiles :right-align t)
                                ("Features" 9 t) ("Clusters" 9 t) ("PND" 4 t) ("True" 4 t)
-                               ("Gleason" 8 t) ("Tumour" 24 t)])
+                               ("Gleason" 8 t)])
   (setq tabulated-list-sort-key '("Slide"))
   (add-hook 'tabulated-list-revert-hook #'histopipe--status-entries nil t)
   ;; Under the key summary, print the column names in the buffer, right
@@ -874,8 +873,7 @@ under the cursor:
                              (or (cdr (assoc "pnd_isup" (gethash name pnd))) "-")
                              (let ((true (cdr (assoc "isup_grade" (gethash name pnd)))))
                                (if (member true '(nil "")) "-" true))
-                             (or (cdr (assoc "gleason" (gethash name gleason))) "-")
-                             (histopipe--gleason-shares (gethash name gleason))))))
+                             (or (cdr (assoc "gleason" (gethash name gleason))) "-")))))
            names))))
 
 ;;;###autoload
@@ -1362,17 +1360,6 @@ they are; turn it off for slides from elsewhere to use every model."
 (defun histopipe--gleason-results ()
   "Hash table of slide id -> alist of its row in gleason_slides.csv."
   (histopipe--csv-table (expand-file-name "gleason_slides.csv" (histopipe--tiles)) "slide"))
-
-(defun histopipe--gleason-shares (row)
-  "Pattern shares of ROW from gleason_slides.csv, largest first, as
-\"G4 80% G5 20%\", or \"-\" when there are none (no row, a negative
-slide, or a file from before gleason.py wrote pct_ columns)."
-  (let ((shares (cl-loop for k in '("G3" "G4" "G5")
-                         for v = (string-to-number (or (cdr (assoc (concat "pct_" k) row)) ""))
-                         when (> v 0) collect (cons k v))))
-    (if (null shares) "-"
-      (mapconcat (lambda (s) (format "%s %d%%" (car s) (cdr s)))
-                 (sort shares (lambda (a b) (> (cdr a) (cdr b)))) " "))))
 
 (defun histopipe--csv-table (file key)
   "Hash table of column KEY -> alist of that row of CSV FILE."

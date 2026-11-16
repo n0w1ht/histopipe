@@ -346,12 +346,13 @@ HISTOPIPE_TEST_VIEWS: a slide folder with tiles/, clusters.parquet and thumbnail
                   nil (expand-file-name "gleason_slides.csv" histopipe-tiles-directory))
     (histopipe-status)
     (with-current-buffer "*histopipe-status*"
-      (should (string-match-p "Gleason +Tumour" (buffer-string)))
-      (should (string-match-p "a .* 4\\+5 +G4 80% G5 20%" (buffer-string)))
-      (should (string-match-p "b .* negative +-" (buffer-string))))
-    ;; A file written before the pct_ columns existed still lists the score.
+      (should (string-match-p "True +Gleason" (buffer-string)))
+      (should-not (string-match-p "Tumour\\|80%" (buffer-string)))
+      (should (string-match-p "a .* 4\\+5" (buffer-string)))
+      (should (string-match-p "b .* negative" (buffer-string))))
+    ;; A file without the old pct_ columns lists the score too.
     (write-region "slide,gleason,isup,tumour_tiles,tiles,n_stroma,n_benign,n_G3,n_G4,n_G5,slide_set\na,3+4,2,30,60,20,10,20,10,0,new\n"
                   nil (expand-file-name "gleason_slides.csv" histopipe-tiles-directory))
     (histopipe-status)
     (with-current-buffer "*histopipe-status*"
-      (should (string-match-p "a .* 3\\+4 +-" (buffer-string))))))
+      (should (string-match-p "a .* 3\\+4" (buffer-string))))))
