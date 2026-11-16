@@ -257,7 +257,16 @@ python gleason\gleason.py predict    & rem gleason_tiles.csv + gleason_map.jpg p
 python gleason\gleason.py evaluate   & rem predicted vs. true ISUP grade from train.csv
 ```
 
-The slide score follows the biopsy rule: the most common cancer pattern plus the highest other pattern. `python gleason\gleason.py <command> --help` lists the options. This is a research model, not a diagnostic tool.
+The slide score follows the biopsy rule: the most common cancer pattern plus the highest other pattern. `predict` also shows how the tumour splits between patterns:
+
+```
+s1: Gleason 4+5      ISUP 5  (50 tumour of 90 tiles, held-out slide)
+    tumour: 80% Gleason pattern 4, 20% Gleason pattern 5
+```
+
+These are percentages of the tiles predicted as tumour (pattern 3, 4 or 5). Every tile is the same size, so they approximate the share of tumour area, but they are tile counts from the model, not a measured area. They include small patterns that `--min-share` leaves out of the score. `tiles\gleason_slides.csv` holds them as `pct_G3`, `pct_G4` and `pct_G5`, blank for negative slides; an existing file gains these columns from its tile counts the next time `predict` runs.
+
+`python gleason\gleason.py <command> --help` lists the options. This is a research model, not a diagnostic tool.
 
 ## Key reference
 
